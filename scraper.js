@@ -239,9 +239,19 @@ async function scrapePost(url) {
       if (m) promoCode = m[1].toUpperCase();
     }
 
-    // Extract product image — prefer Amazon CDN images; skip UUID-named screenshots
-    // UUID screenshot filenames look like: f6ec80d0-0b74-4e01-b97f-3d63685e8238.jpeg
-    const isScreenshot = (u) => /\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\./i.test(u || '');
+    // Extract product image — prefer Amazon CDN images; skip known bad/screenshot filenames
+    const isScreenshot = (u) => {
+      if (!u) return false;
+      // UUID filenames, with optional WordPress -e[timestamp] suffix
+      // e.g. f6ec80d0-0b74-4e01-b97f-3d63685e8238.jpeg
+      //      c9ee656c-04e5-48b1-a9d4-fe4153ca15e6-e1772721154125.jpeg
+      if (/\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}(-e\d+)?\./i.test(u)) return true;
+      // Literally named "Untitled" (checkout page screenshots saved without renaming)
+      if (/\/untitled\./i.test(u)) return true;
+      // Screenshot filenames (Screenshot-2026-03-04-at-10.15.37-PM.png etc.)
+      if (/\/screenshot[-_.]/i.test(u)) return true;
+      return false;
+    };
 
     let imageUrl = null;
     // 1st choice: Amazon-hosted product image anywhere in the post body
@@ -563,8 +573,12 @@ function openDeal(evt, el) {
 // ══════════════════════════════════════════════════════════════════
 
 function cardHtml(deal) {
-  const imgHtml = deal.imageUrl
-    ? `<div class="deal-img"><img src="${deal.imageUrl}" alt="${esc(deal.title)}" loading="lazy"></div>`
+  // Use the scraped image; fall back to Amazon's predictable ASIN image CDN URL.
+  // The onerror hides the container silently if the URL resolves to a 404.
+  const imgSrc = deal.imageUrl
+    || (deal.asin ? `https://images-na.ssl-images-amazon.com/images/P/${deal.asin}.01.L.jpg` : null);
+  const imgHtml = imgSrc
+    ? `<div class="deal-img"><img src="${imgSrc}" alt="${esc(deal.title)}" loading="lazy" onerror="this.parentElement.style.display='none'"></div>`
     : '';
   const promoHtml = deal.promoCode
     ? `      <div class="promo-badge">
