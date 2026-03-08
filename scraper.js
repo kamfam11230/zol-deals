@@ -536,6 +536,70 @@ footer {
   .deals-grid { grid-template-columns: 1fr; }
   header h1   { font-size: 1.6rem; }
 }
+
+/* Cross-device continuity */
+.phone-btn {
+  position: fixed;
+  bottom: 24px;
+  right: 24px;
+  background: #232f3e;
+  color: #fff;
+  border: none;
+  border-radius: 28px;
+  padding: 12px 20px;
+  font-size: 0.88rem;
+  font-weight: 700;
+  cursor: pointer;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.22);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  z-index: 900;
+  transition: background 0.15s;
+}
+.phone-btn:hover { background: #FF9900; }
+.phone-btn svg { flex-shrink: 0; }
+
+.qr-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.55);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+}
+.qr-box {
+  background: #fff;
+  border-radius: 14px;
+  padding: 28px 32px;
+  text-align: center;
+  max-width: 320px;
+  width: 90%;
+  position: relative;
+  box-shadow: 0 8px 32px rgba(0,0,0,0.22);
+}
+.qr-box h3 { font-size: 1.1rem; color: #232f3e; margin-bottom: 8px; }
+.qr-box p  { font-size: 0.85rem; color: #666; margin-bottom: 18px; }
+.qr-box img { border-radius: 8px; border: 2px solid #f0f0f0; }
+.qr-url {
+  font-size: 0.72rem;
+  color: #aaa;
+  word-break: break-all;
+  margin-top: 12px;
+}
+.qr-close {
+  position: absolute;
+  top: 10px;
+  right: 14px;
+  background: none;
+  border: none;
+  font-size: 1.4rem;
+  color: #999;
+  cursor: pointer;
+  line-height: 1;
+}
+.qr-close:hover { color: #333; }
 `.trim();
 
 // ══════════════════════════════════════════════════════════════════
@@ -573,6 +637,30 @@ function openDeal(evt, el) {
       'S.browser_fallback_url=' + encodeURIComponent(url) + ';end';
   }
 }
+
+(function() {
+  if (/Mobi|Android|iPhone|iPad|iPod/i.test(navigator.userAgent)) return;
+  var btn = document.createElement('button');
+  btn.className = 'phone-btn';
+  btn.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="2" width="14" height="20" rx="2"/><line x1="12" y1="18" x2="12" y2="18.01"/></svg> Continue on Phone';
+  btn.onclick = function() {
+    var url = window.location.href;
+    var overlay = document.createElement('div');
+    overlay.className = 'qr-overlay';
+    overlay.innerHTML =
+      '<div class="qr-box">' +
+        '<button class="qr-close" title="Close">&#x2715;</button>' +
+        '<h3>Continue on Your Phone</h3>' +
+        '<p>Scan with your phone camera to pick up right where you left off.</p>' +
+        '<img src="https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=' + encodeURIComponent(url) + '" width="200" height="200" alt="QR code">' +
+        '<p class="qr-url">' + url + '</p>' +
+      '</div>';
+    overlay.querySelector('.qr-close').onclick = function() { overlay.remove(); };
+    overlay.addEventListener('click', function(e) { if (e.target === overlay) overlay.remove(); });
+    document.body.appendChild(overlay);
+  };
+  document.body.appendChild(btn);
+})();
 `.trim();
 
 // ══════════════════════════════════════════════════════════════════

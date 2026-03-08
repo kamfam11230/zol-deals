@@ -165,3 +165,67 @@ footer {
   .deals-grid { grid-template-columns: 1fr; }
   header h1   { font-size: 1.6rem; }
 }
+
+/* Cross-device continuity */
+.phone-btn {
+  position: fixed;
+  bottom: 24px;
+  right: 24px;
+  background: #232f3e;
+  color: #fff;
+  border: none;
+  border-radius: 28px;
+  padding: 12px 20px;
+  font-size: 0.88rem;
+  font-weight: 700;
+  cursor: pointer;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.22);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  z-index: 900;
+  transition: background 0.15s;
+}
+.phone-btn:hover { background: #FF9900; }
+.phone-btn svg { flex-shrink: 0; }
+
+.qr-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.55);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+}
+.qr-box {
+  background: #fff;
+  border-radius: 14px;
+  padding: 28px 32px;
+  text-align: center;
+  max-width: 320px;
+  width: 90%;
+  position: relative;
+  box-shadow: 0 8px 32px rgba(0,0,0,0.22);
+}
+.qr-box h3 { font-size: 1.1rem; color: #232f3e; margin-bottom: 8px; }
+.qr-box p  { font-size: 0.85rem; color: #666; margin-bottom: 18px; }
+.qr-box img { border-radius: 8px; border: 2px solid #f0f0f0; }
+.qr-url {
+  font-size: 0.72rem;
+  color: #aaa;
+  word-break: break-all;
+  margin-top: 12px;
+}
+.qr-close {
+  position: absolute;
+  top: 10px;
+  right: 14px;
+  background: none;
+  border: none;
+  font-size: 1.4rem;
+  color: #999;
+  cursor: pointer;
+  line-height: 1;
+}
+.qr-close:hover { color: #333; }
