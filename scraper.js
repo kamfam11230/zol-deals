@@ -274,7 +274,7 @@ WEBSITE: [your website copy here]
 WHATSAPP: [your whatsapp copy here]`;
 
   try {
-    const model = genAI.getGenerativeModel({ model: 'gemini-2.0-flash' });
+    const model = genAI.getGenerativeModel({ model: 'gemini-2.0-flash-lite' });
     const result = await model.generateContent(prompt);
     const text = result.response.text().trim();
 
@@ -678,6 +678,7 @@ async function main() {
           waCopy:  'Hot deal on Amazon today! 🛒 Check it out.',
         };
     newEnrichedDeals.push({ ...deal, webCopy, waCopy });
+    if (genAI) await sleep(5000); // stay within Gemini free-tier rate limit (15 RPM)
   }
 
   // Merge new deals with cached deals (newest first)
