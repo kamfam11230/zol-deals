@@ -116,9 +116,15 @@ function isBadImage(u) {
 //  AFFILIATE LINK HELPERS
 // ══════════════════════════════════════════════════════════════════
 
-/** Returns true if this URL is an Amazon or amzn.to link */
+/**
+ * Returns true only for Amazon product pages or amzn.to short links.
+ * Deliberately excludes Prime signup pages, Amazon Business, wishlist links,
+ * "Don't miss a deal" posts, etc. — only real product URLs count.
+ */
 function isAmazonLink(url) {
-  return url.includes('amzn.to') || url.includes('amazon.com');
+  if (url.includes('amzn.to')) return true;
+  if (url.includes('amazon.com/dp/') || url.includes('amazon.com/gp/product/')) return true;
+  return false;
 }
 
 /** Add our affiliate tag to an Amazon link */
@@ -592,25 +598,36 @@ footer {
 // Desktop:     window.open in a new tab, unchanged.
 const SITE_JS = `
 function openDeal(evt, el) {
-  evt.preventDefault();
   var url = el.href;
   var asin = el.dataset.asin;
   var ua = navigator.userAgent;
-  // Desktop: open Amazon in a new tab
-  if (!/Mobi|Android|iPhone|iPad|iPod/i.test(ua)) {
+
+  // iOS: return WITHOUT calling preventDefault so the native <a> tap proceeds.
+  // iOS intercepts amazon.com Universal Links BEFORE the browser navigates —
+  // but ONLY if the tap event hasn't been cancelled. Calling preventDefault()
+  // here kills the event and the app never opens.
+  if (/iPhone|iPad|iPod/i.test(ua)) return;
+
+  // Everything else needs preventDefault so we can control the navigation.
+  evt.preventDefault();
+
+  // Desktop: open Amazon in a new tab as normal
+  if (!/Mobi|Android/i.test(ua)) {
     window.open(url, '_blank', 'noopener');
     return;
   }
-  // Android + ASIN: intent URI — OS picks app or browser automatically
-  if (/Android/i.test(ua) && asin) {
+
+  // Android + ASIN: intent URI routes directly to the Amazon app.
+  // browser_fallback_url handles "app not installed" gracefully.
+  if (asin) {
     window.location.href =
       'intent://www.amazon.com/dp/' + asin + '?tag=${AFFILIATE_TAG}' +
       '#Intent;scheme=https;package=com.amazon.mShop.android.shopping;' +
       'S.browser_fallback_url=' + encodeURIComponent(url) + ';end';
     return;
   }
-  // iOS + all other mobile: navigate directly.
-  // Amazon's Universal Links open the app if installed; Safari otherwise.
+
+  // Android without an extractable ASIN: fall back to plain navigation
   window.location.href = url;
 }
 `.trim();
