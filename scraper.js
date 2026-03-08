@@ -617,12 +617,20 @@ function openDeal(evt, el) {
   var url = el.href;
   var asin = el.dataset.asin;
   var ua = navigator.userAgent;
-  if (!asin || !/Mobi|Android|iPhone|iPad|iPod/i.test(ua)) {
+  if (!/Mobi|Android|iPhone|iPad|iPod/i.test(ua)) {
     window.open(url, '_blank', 'noopener');
     return;
   }
+  if (!asin) {
+    // No ASIN but still mobile — navigate directly so Universal Links can
+    // intercept amazon.com URLs and open the Amazon app.
+    window.location.href = url;
+    return;
+  }
   if (/iPhone|iPad|iPod/i.test(ua)) {
-    var t = setTimeout(function() { window.open(url, '_blank', 'noopener'); }, 2000);
+    // Try Amazon custom scheme; if app not installed fall back via Universal Link
+    // (window.location.href, not window.open, so iOS can route to the app).
+    var t = setTimeout(function() { window.location.href = url; }, 2000);
     document.addEventListener('visibilitychange', function h() {
       if (document.hidden) {
         clearTimeout(t);
