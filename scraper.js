@@ -172,6 +172,31 @@ function resolveAmznShortLink(shortUrl) {
   });
 }
 
+/**
+ * Fetch the Amazon product page for a given ASIN and extract the main
+ * product image URL. Amazon embeds image data in JSON objects in the page
+ * source — we pull the hiRes or large URL from there without executing JS.
+ * Returns null on any failure so callers can fall back gracefully.
+ */
+async function fetchAmazonProductImage(asin) {
+  try {
+    const resp = await axios.get(`https://www.amazon.com/dp/${asin}`, {
+      headers: HEADERS,
+      timeout: 10000,
+    });
+    const html = resp.data;
+    // Amazon embeds image data in several places; try each in order of preference
+    const m = html.match(/"hiRes"\s*:\s*"(https:\/\/m\.media-amazon\.com\/images\/I\/[^"]+\.jpg)"/)
+           || html.match(/data-old-hires="(https:\/\/m\.media-amazon\.com\/images\/I\/[^"]+\.jpg)"/)
+           || html.match(/"large"\s*:\s*"(https:\/\/m\.media-amazon\.com\/images\/I\/[^"]+\.jpg)"/)
+           || html.match(/id="landingImage"[^>]+src="(https:\/\/m\.media-amazon\.com\/images\/I\/[^"]+\.jpg)"/);
+    return m ? m[1] : null;
+  } catch (e) {
+    return null;
+  }
+}
+
+
 // ══════════════════════════════════════════════════════════════════
 //  SCRAPING
 // ══════════════════════════════════════════════════════════════════
@@ -284,6 +309,17 @@ async function scrapePost(url) {
         const src = $(el).attr('src') || $(el).attr('data-src') || '';
         if (src && !isBadImage(src)) imageUrl = src;
       });
+    }
+
+    // 4th choice: scrape the Amazon product page for the main product image.
+    // Only runs when we still have no image — keeps cached runs instant.
+    if (!imageUrl && amazonLinks.length > 0) {
+      const asinCandidate = extractAsin(amazonLinks[0]) || extractAsin(await resolveAmznShortLink(amazonLinks[0]));
+      if (asinCandidate) {
+        const amzImg = await fetchAmazonProductImage(asinCandidate);
+        if (amzImg) imageUrl = amzImg;
+        await sleep(1000); // polite pause after hitting Amazon
+      }
     }
 
     // Resolve amzn.to short links → full amazon.com URL → then swap tag
@@ -543,35 +579,39 @@ footer {
 // ══════════════════════════════════════════════════════════════════
 
 // Inlined into every page so no extra round-trip is needed.
-// iOS:     tries amzn://dp/ASIN (Amazon app) — falls back to browser after 2s
-//          Uses visibilitychange to cancel the timer if the app actually opened.
-// Android: uses Android Intent URI; the system opens the app or the browser.
-// Desktop: just opens the web URL in a new tab.
+//
+// iOS Safari:  window.location.href = amazon URL  →  iOS Universal Links intercepts
+//              and opens the Amazon app if installed; otherwise loads in Safari.
+//              (amzn:// scheme was dropped: if the app isn't installed Safari shows
+//               a dead-end error, and the setTimeout/window.open fallback is then
+//               blocked as an unsolicited popup — leaving the link completely dead.)
+//
+// Android:     intent:// URI explicitly routes to the Amazon app.
+//              The browser_fallback_url field handles "app not installed" gracefully.
+//
+// Desktop:     window.open in a new tab, unchanged.
 const SITE_JS = `
 function openDeal(evt, el) {
   evt.preventDefault();
   var url = el.href;
   var asin = el.dataset.asin;
   var ua = navigator.userAgent;
-  if (!asin || !/Mobi|Android|iPhone|iPad|iPod/i.test(ua)) {
+  // Desktop: open Amazon in a new tab
+  if (!/Mobi|Android|iPhone|iPad|iPod/i.test(ua)) {
     window.open(url, '_blank', 'noopener');
     return;
   }
-  if (/iPhone|iPad|iPod/i.test(ua)) {
-    var t = setTimeout(function() { window.open(url, '_blank', 'noopener'); }, 2000);
-    document.addEventListener('visibilitychange', function h() {
-      if (document.hidden) {
-        clearTimeout(t);
-        document.removeEventListener('visibilitychange', h);
-      }
-    });
-    window.location.href = 'amzn://dp/' + asin + '?tag=${AFFILIATE_TAG}';
-  } else {
+  // Android + ASIN: intent URI — OS picks app or browser automatically
+  if (/Android/i.test(ua) && asin) {
     window.location.href =
       'intent://www.amazon.com/dp/' + asin + '?tag=${AFFILIATE_TAG}' +
       '#Intent;scheme=https;package=com.amazon.mShop.android.shopping;' +
       'S.browser_fallback_url=' + encodeURIComponent(url) + ';end';
+    return;
   }
+  // iOS + all other mobile: navigate directly.
+  // Amazon's Universal Links open the app if installed; Safari otherwise.
+  window.location.href = url;
 }
 `.trim();
 
