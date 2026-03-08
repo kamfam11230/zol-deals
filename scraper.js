@@ -3,16 +3,16 @@
  * =====================================================
  * Runs with Node.js (no Python needed).
  *
- * What it does each day:
- *   1. Scrapes today's deals from tjbdeals.com
- *   2. Keeps only posts that have Amazon links
- *   3. Rewrites copy using Claude AI
- *   4. Generates a static HTML website
- *   5. Pushes to GitHub (Netlify auto-deploys)
+ * What it does on every run:
+ *   1. Scrapes tjbdeals.com for all Amazon deals
+ *   2. Skips deals already processed today (uses cache — no extra AI cost)
+ *   3. Rewrites only NEW deals using Claude AI
+ *   4. Regenerates the static HTML website with all deals
+ *   5. Pushes to GitHub only if new deals were found (Netlify auto-deploys)
  *   6. Saves a WhatsApp broadcast .txt to your Desktop
  *
  * Run manually:  node scraper.js
- * Scheduled:     Windows Task Scheduler (see setup guide)
+ * Scheduled:     Windows Task Scheduler — runs every 30 minutes
  */
 
 const axios      = require('axios');       // fetches web pages
@@ -20,6 +20,7 @@ const cheerio    = require('cheerio');     // parses HTML
 const Anthropic  = require('@anthropic-ai/sdk'); // Claude AI
 const fs         = require('fs');          // file system (built-in)
 const path       = require('path');        // file paths (built-in)
+const https      = require('https');       // for resolving short links (built-in)
 const { execSync } = require('child_process'); // runs git commands (built-in)
 
 // ══════════════════════════════════════════════════════════════════
@@ -31,7 +32,28 @@ const SOURCE_URL    = 'https://www.tjbdeals.com';
 const SITE_DIR      = 'zol-deals-site';
 const DEALS_DIR     = path.join(SITE_DIR, 'deals');
 const ARCHIVE_FILE  = 'archive.json';
-const DESKTOP_PATH  = 'C:\\Users\\it\\Desktop';
+const DESKTOP_PATH  = 'C:\\Users\\it\\OneDrive - Element Re Development\\Desktop';
+
+// Detect if we're running on GitHub Actions (cloud) vs your local PC
+// When true: skips the Windows Desktop file save and internal git push
+//            (the GitHub Actions workflow handles committing instead)
+const IS_CI = process.env.GITHUB_ACTIONS === 'true';
+
+// Daily cache — stores processed deals so we never re-call the AI for the same deal
+// File is named deals_cache_YYYY-MM-DD.json and resets automatically each new day
+function cacheFile(dateStr) { return `deals_cache_${dateStr}.json`; }
+
+function loadCache(dateStr) {
+  const file = cacheFile(dateStr);
+  if (fs.existsSync(file)) {
+    return JSON.parse(fs.readFileSync(file, 'utf8')); // array of enriched deals
+  }
+  return [];
+}
+
+function saveCache(dateStr, deals) {
+  fs.writeFileSync(cacheFile(dateStr), JSON.stringify(deals, null, 2));
+}
 
 // Realistic browser header so we don't get blocked
 const HEADERS = {
@@ -94,6 +116,34 @@ function tagLink(url) {
     return u.toString();
   }
   return url;
+}
+
+/**
+ * Follow an amzn.to short link one hop and return the full amazon.com URL.
+ * amzn.to links have the ORIGINAL creator's tag baked in — we must resolve
+ * the redirect first to get the real amazon.com URL, then swap the tag.
+ * Falls back to the original short URL if anything goes wrong.
+ */
+function resolveAmznShortLink(shortUrl) {
+  return new Promise((resolve) => {
+    try {
+      const req = https.get(shortUrl, { headers: HEADERS }, (res) => {
+        const location = res.headers.location;
+        res.destroy(); // don't download the body
+        if (res.statusCode >= 300 && res.statusCode < 400 && location) {
+          // If it redirected to another short link, keep the original
+          // (tagLink will append tag= which Amazon honours on one-hop chains)
+          resolve(location.includes('amazon.com') ? location : shortUrl);
+        } else {
+          resolve(shortUrl);
+        }
+      });
+      req.setTimeout(8000, () => { req.destroy(); resolve(shortUrl); });
+      req.on('error', () => resolve(shortUrl));
+    } catch (e) {
+      resolve(shortUrl);
+    }
+  });
 }
 
 // ══════════════════════════════════════════════════════════════════
@@ -167,10 +217,26 @@ async function scrapePost(url) {
     });
     const description = paragraphs.slice(0, 3).join(' ').slice(0, 800) || title;
 
+    // Extract product image
+    // 1st choice: og:image meta tag (WordPress always sets this to the featured image)
+    // 2nd choice: first <img> inside the post content
+    const ogImage = $('meta[property="og:image"]').attr('content')
+                 || $('meta[name="og:image"]').attr('content');
+    const contentImage = contentEl.find('img').first().attr('src');
+    const imageUrl = ogImage || contentImage || null;
+
+    // Resolve amzn.to short links → full amazon.com URL → then swap tag
+    // (tag= appended to a short link doesn't override the baked-in tag)
+    let rawLink = amazonLinks[0];
+    if (rawLink.includes('amzn.to')) {
+      rawLink = await resolveAmznShortLink(rawLink);
+    }
+
     return {
       title,
       description,
-      affiliateUrl: tagLink(amazonLinks[0]),
+      imageUrl,
+      affiliateUrl: tagLink(rawLink),
       sourceUrl: url,
     };
   } catch (err) {
@@ -287,6 +353,23 @@ h2.section-title {
 .deal-card h3 { font-size: 1rem; color: #111; line-height: 1.45; }
 .deal-card p  { font-size: 0.93rem; color: #555; flex-grow: 1; }
 
+.deal-img {
+  width: 100%;
+  height: 180px;
+  overflow: hidden;
+  border-radius: 6px;
+  background: #f0f0f0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.deal-img img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  padding: 8px;
+}
+
 .btn {
   display: inline-block;
   background: #FF9900;
@@ -361,7 +444,11 @@ footer {
 // ══════════════════════════════════════════════════════════════════
 
 function cardHtml(deal) {
+  const imgHtml = deal.imageUrl
+    ? `<div class="deal-img"><img src="${deal.imageUrl}" alt="${esc(deal.title)}" loading="lazy"></div>`
+    : '';
   return `    <div class="deal-card">
+${imgHtml}
       <h3>${esc(deal.title)}</h3>
       <p>${esc(deal.webCopy)}</p>
       <a class="btn" href="${deal.affiliateUrl}" target="_blank" rel="noopener sponsored">Shop on Amazon →</a>
@@ -551,6 +638,11 @@ async function main() {
     console.log('  Anthropic client ready.\n');
   }
 
+  // Load today's cache (deals already processed this run/earlier today)
+  const cachedDeals = loadCache(today);
+  const cachedUrls  = new Set(cachedDeals.map(d => d.sourceUrl));
+  console.log(`  ${cachedDeals.length} deal(s) already in today's cache.\n`);
+
   // Step 1: Get post links from homepage
   const postLinks = await getPostLinks();
   if (!postLinks.length) {
@@ -558,25 +650,29 @@ async function main() {
     return;
   }
 
-  // Step 2: Scrape each post for Amazon deals
+  // Step 2: Scrape each post — skip any URL already in the cache
   console.log('Checking each post for Amazon links...');
-  const rawDeals = [];
+  const newRawDeals = [];
   for (let i = 0; i < postLinks.length; i++) {
     const url = postLinks[i];
+    if (cachedUrls.has(url)) {
+      console.log(`  [${i + 1}/${postLinks.length}] (cached) ${url}`);
+      continue; // already processed — skip scraping entirely
+    }
     console.log(`  [${i + 1}/${postLinks.length}] ${url}`);
     const deal = await scrapePost(url);
     if (deal) {
-      rawDeals.push(deal);
-      console.log(`       ✓ Deal: ${deal.title.slice(0, 55)}...`);
+      newRawDeals.push(deal);
+      console.log(`       ✓ New deal: ${deal.title.slice(0, 55)}...`);
     }
     await sleep(1500); // polite pause between requests
   }
-  console.log(`\n  ${rawDeals.length} Amazon deal(s) found.\n`);
+  console.log(`\n  ${newRawDeals.length} new deal(s) found this run.\n`);
 
-  // Step 3: Rewrite with AI
-  const enrichedDeals = [];
-  if (rawDeals.length) console.log('Rewriting deals with Claude AI...');
-  for (const deal of rawDeals) {
+  // Step 3: Rewrite only NEW deals with AI
+  const newEnrichedDeals = [];
+  if (newRawDeals.length) console.log('Rewriting new deals with Claude AI...');
+  for (const deal of newRawDeals) {
     console.log(`  Rewriting: ${deal.title.slice(0, 55)}...`);
     const { webCopy, waCopy } = client
       ? await rewriteDeal(client, deal.title, deal.description)
@@ -584,7 +680,18 @@ async function main() {
           webCopy: `${deal.description.slice(0, 200).trimEnd()} Grab it here →`,
           waCopy:  'Hot deal on Amazon today! 🛒 Check it out.',
         };
-    enrichedDeals.push({ ...deal, webCopy, waCopy });
+    newEnrichedDeals.push({ ...deal, webCopy, waCopy });
+  }
+
+  // Merge new deals with cached deals (newest first)
+  const enrichedDeals = [...newEnrichedDeals, ...cachedDeals];
+
+  // Save updated cache for today
+  if (newEnrichedDeals.length > 0) {
+    saveCache(today, enrichedDeals);
+    console.log(`  Cache updated — ${enrichedDeals.length} total deal(s) today.\n`);
+  } else {
+    console.log('  No new deals this run — nothing to update.\n');
   }
 
   // Step 4: Load archive, add today
@@ -607,16 +714,36 @@ async function main() {
   saveArchive(archiveDates);
   console.log(`  Updated: ${ARCHIVE_FILE}`);
 
+  // If no new deals were found, nothing else to do
+  if (newEnrichedDeals.length === 0) {
+    console.log('No new deals found this run. Checking again next cycle.');
+    console.log('═'.repeat(52) + '\n');
+    return;
+  }
+
   // Step 7: Save WhatsApp file
-  console.log('\nSaving WhatsApp file...');
-  saveWhatsappFile(enrichedDeals, today);
+  // On your PC: saves to Desktop as usual
+  // On GitHub Actions (cloud): skipped — no Desktop available
+  if (!IS_CI) {
+    console.log('Saving WhatsApp file...');
+    saveWhatsappFile(enrichedDeals, today);
+  } else {
+    console.log('Running in cloud — skipping WhatsApp Desktop file.');
+  }
 
   // Step 8: Push to GitHub
-  console.log('\nPushing to GitHub...');
-  gitPush(today);
+  // On your PC: script pushes directly
+  // On GitHub Actions: the workflow yml handles the commit/push instead
+  if (!IS_CI) {
+    console.log('\nPushing to GitHub...');
+    gitPush(today);
+  } else {
+    console.log('Running in cloud — git push handled by workflow.');
+  }
 
   console.log('\n' + '═'.repeat(52));
-  console.log(`  Done! ${enrichedDeals.length} deal(s) processed for ${today}.`);
+  console.log(`  Done! ${newEnrichedDeals.length} new deal(s) added.`);
+  console.log(`  ${enrichedDeals.length} total deal(s) live for ${today}.`);
   console.log('═'.repeat(52) + '\n');
 }
 

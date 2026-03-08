@@ -1,6 +1,12 @@
 # Node packages — installed locally via npm install, never commit
 node_modules/
 
+# Daily deal cache files — local only, reset each day
+deals_cache_*.json
+
+# Telegram watcher state — local only
+last_seen_post.txt
+
 # Environment / secrets — never commit these
 .env
 *.env

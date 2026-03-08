@@ -1,0 +1,65 @@
+name: Zol Deals — Scrape & Deploy
+
+on:
+  schedule:
+    # Runs every 30 minutes, 24/7, on GitHub's servers
+    # Your computer does NOT need to be on
+    - cron: '*/30 * * * *'
+
+  # Also lets you trigger a run manually from GitHub.com
+  workflow_dispatch:
+
+jobs:
+  scrape:
+    runs-on: ubuntu-latest
+
+    # Allow the workflow to commit files back to the repo
+    permissions:
+      contents: write
+
+    steps:
+      # 1. Download the repo code onto the GitHub server
+      - name: Checkout repo
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      # 2. Install Node.js
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      # 3. Restore today's deal cache (so we don't re-call AI for deals already processed)
+      - name: Get today's date
+        run: echo "TODAY=$(date +%Y-%m-%d)" >> $GITHUB_ENV
+
+      - name: Restore deal cache
+        uses: actions/cache@v4
+        with:
+          path: deals_cache_*.json
+          key: deals-cache-${{ env.TODAY }}
+          restore-keys: deals-cache-
+
+      # 4. Install npm packages
+      - name: Install dependencies
+        run: npm install
+
+      # 5. Run the scraper (ANTHROPIC_API_KEY comes from GitHub Secrets)
+      - name: Run scraper
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          GITHUB_ACTIONS: 'true'
+        run: node scraper.js
+
+      # 6. Commit and push any new/updated site files back to GitHub
+      #    Netlify watches the repo and auto-deploys on every push
+      - name: Commit and push changes
+        run: |
+          git config user.name  "Zol Deals Bot"
+          git config user.email "bot@zoldeals.app"
+          git add zol-deals-site/ archive.json
+          git diff --staged --quiet && echo "Nothing new to commit." || (
+            git commit -m "Automated deals update: $(date +%Y-%m-%d %H:%M UTC)" &&
+            git push
+          )
