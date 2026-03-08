@@ -1,0 +1,28 @@
+# Node packages — installed locally via npm install, never commit
+node_modules/
+
+# Environment / secrets — never commit these
+.env
+*.env
+
+# Python cache files — not needed in the repo
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Virtual environment folders (if you ever create one)
+env/
+venv/
+.venv/
+
+# macOS junk
+.DS_Store
+
+# Windows junk
+Thumbs.db
+desktop.ini
+
+# Editor folders
+.vscode/
+.idea/

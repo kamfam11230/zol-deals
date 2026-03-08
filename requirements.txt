@@ -1,0 +1,6 @@
+# Zol Deals — Python dependencies
+# Install all of these with:  pip install -r requirements.txt
+
+requests==2.31.0          # Fetches web pages (scraping)
+beautifulsoup4==4.12.3    # Parses HTML (extracts deal info)
+anthropic>=0.25.0         # Claude AI API (rewrites deal copy)
