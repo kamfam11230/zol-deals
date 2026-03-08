@@ -217,13 +217,51 @@ async function scrapePost(url) {
     });
     const description = paragraphs.slice(0, 3).join(' ').slice(0, 800) || title;
 
-    // Extract product image
-    // 1st choice: og:image meta tag (WordPress always sets this to the featured image)
-    // 2nd choice: first <img> inside the post content
-    const ogImage = $('meta[property="og:image"]').attr('content')
-                 || $('meta[name="og:image"]').attr('content');
-    const contentImage = contentEl.find('img').first().attr('src');
-    const imageUrl = ogImage || contentImage || null;
+    // Extract promo code — look in <strong> tags first, then full content text
+    let promoCode = null;
+    contentEl.find('strong').each((_, el) => {
+      if (promoCode) return;
+      const t = $(el).text().trim();
+      const m = t.match(/(?:promo|coupon|discount)\s*code[:\s]+([A-Z0-9]{4,20})/i)
+             || t.match(/use\s+(?:code|coupon)[:\s]+([A-Z0-9]{4,20})/i);
+      if (m) promoCode = m[1].toUpperCase();
+    });
+    if (!promoCode) {
+      const fullText = contentEl.text();
+      const m = fullText.match(/(?:promo|coupon|discount)\s*code[:\s]+([A-Z0-9]{4,20})/i)
+             || fullText.match(/use\s+(?:code|coupon)[:\s]+([A-Z0-9]{4,20})/i);
+      if (m) promoCode = m[1].toUpperCase();
+    }
+
+    // Extract product image — prefer Amazon CDN images; skip UUID-named screenshots
+    // UUID screenshot filenames look like: f6ec80d0-0b74-4e01-b97f-3d63685e8238.jpeg
+    const isScreenshot = (u) => /\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\./i.test(u || '');
+
+    let imageUrl = null;
+    // 1st choice: Amazon-hosted product image anywhere in the post body
+    contentEl.find('img').each((_, el) => {
+      if (imageUrl) return;
+      const src = $(el).attr('src') || $(el).attr('data-src') || '';
+      if (src.includes('m.media-amazon.com') || src.includes('ssl-images-amazon.com')) {
+        imageUrl = src;
+      }
+    });
+    // 2nd choice: og:image / og:image:secure_url (skip UUID checkout screenshots)
+    if (!imageUrl) {
+      const ogImg = $('meta[property="og:image"]').attr('content')
+                 || $('meta[property="og:image:secure_url"]').attr('content')
+                 || $('meta[name="og:image"]').attr('content')
+                 || null;
+      if (ogImg && !isScreenshot(ogImg)) imageUrl = ogImg;
+    }
+    // 3rd choice: first non-screenshot content image from an external domain
+    if (!imageUrl) {
+      contentEl.find('img').each((_, el) => {
+        if (imageUrl) return;
+        const src = $(el).attr('src') || '';
+        if (src && !isScreenshot(src) && !src.includes('tjbdeals.com')) imageUrl = src;
+      });
+    }
 
     // Resolve amzn.to short links → full amazon.com URL → then swap tag
     // (tag= appended to a short link doesn't override the baked-in tag)
@@ -236,6 +274,7 @@ async function scrapePost(url) {
       title,
       description,
       imageUrl,
+      promoCode,
       affiliateUrl: tagLink(rawLink),
       sourceUrl: url,
     };
@@ -253,13 +292,14 @@ async function scrapePost(url) {
  * Ask Groq (Llama) to produce a website version and a WhatsApp version.
  * Falls back to original text if the API call fails.
  */
-async function rewriteDeal(groq, title, description) {
+async function rewriteDeal(groq, title, description, promoCode = null) {
+  const promoLine = promoCode ? `\nPROMO CODE: ${promoCode} — work this code into the copy naturally.` : '';
   const prompt = `You are a copywriter for Zol Deals, an Amazon deals site.
 
 Rewrite this deal in TWO versions:
 
 DEAL TITLE: ${title}
-DEAL DESCRIPTION: ${description}
+DEAL DESCRIPTION: ${description}${promoLine}
 
 VERSION 1 - WEBSITE
 2-3 punchy sentences. Highlights the value or savings. Ends with "Grab it here →".
@@ -415,6 +455,40 @@ h2.section-title {
 }
 .archive-list a:hover { background: #FF9900; color: #fff; }
 
+.promo-badge {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: #fff8e7;
+  border: 1.5px dashed #FF9900;
+  border-radius: 6px;
+  padding: 7px 12px;
+}
+.promo-label {
+  font-size: 0.75rem;
+  font-weight: 700;
+  color: #888;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  white-space: nowrap;
+}
+.promo-copy {
+  font-family: 'Courier New', monospace;
+  font-size: 0.95rem;
+  font-weight: 700;
+  color: #232f3e;
+  letter-spacing: 1.5px;
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 2px 8px;
+  border-radius: 4px;
+  transition: background 0.15s;
+  flex: 1;
+  text-align: left;
+}
+.promo-copy:hover { background: rgba(255,153,0,0.15); }
+
 .back-link {
   display: inline-block;
   color: #FF9900;
@@ -447,10 +521,17 @@ function cardHtml(deal) {
   const imgHtml = deal.imageUrl
     ? `<div class="deal-img"><img src="${deal.imageUrl}" alt="${esc(deal.title)}" loading="lazy"></div>`
     : '';
+  const promoHtml = deal.promoCode
+    ? `      <div class="promo-badge">
+        <span class="promo-label">Code</span>
+        <button class="promo-copy" onclick="this.textContent='Copied!';navigator.clipboard.writeText('${esc(deal.promoCode)}');setTimeout(()=>this.textContent='${esc(deal.promoCode)}',1500)">${esc(deal.promoCode)}</button>
+      </div>`
+    : '';
   return `    <div class="deal-card">
 ${imgHtml}
       <h3>${esc(deal.title)}</h3>
       <p>${esc(deal.webCopy)}</p>
+${promoHtml}
       <a class="btn" href="${deal.affiliateUrl}" target="_blank" rel="noopener sponsored">Shop on Amazon →</a>
     </div>`;
 }
@@ -675,7 +756,7 @@ async function main() {
   for (const deal of newRawDeals) {
     console.log(`  Rewriting: ${deal.title.slice(0, 55)}...`);
     const { webCopy, waCopy } = groqClient
-      ? await rewriteDeal(groqClient, deal.title, deal.description)
+      ? await rewriteDeal(groqClient, deal.title, deal.description, deal.promoCode)
       : {
           webCopy: `${deal.description.slice(0, 200).trimEnd()} Grab it here →`,
           waCopy:  'Hot deal on Amazon today! 🛒 Check it out.',
