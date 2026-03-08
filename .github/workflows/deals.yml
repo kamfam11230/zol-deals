@@ -46,10 +46,10 @@ jobs:
       - name: Install dependencies
         run: npm install
 
-      # 5. Run the scraper (GEMINI_API_KEY comes from GitHub Secrets)
+      # 5. Run the scraper (GROQ_API_KEY comes from GitHub Secrets)
       - name: Run scraper
         env:
-          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
           GITHUB_ACTIONS: 'true'
         run: node scraper.js
 

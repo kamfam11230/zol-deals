@@ -17,7 +17,7 @@
 
 const axios      = require('axios');       // fetches web pages
 const cheerio    = require('cheerio');     // parses HTML
-const { GoogleGenerativeAI } = require('@google/generative-ai'); // Gemini AI
+const Groq = require('groq-sdk'); // Groq AI (free, fast, global)
 const fs         = require('fs');          // file system (built-in)
 const path       = require('path');        // file paths (built-in)
 const https      = require('https');       // for resolving short links (built-in)
@@ -250,10 +250,10 @@ async function scrapePost(url) {
 // ══════════════════════════════════════════════════════════════════
 
 /**
- * Ask Claude Haiku to produce a website version and a WhatsApp version.
+ * Ask Groq (Llama) to produce a website version and a WhatsApp version.
  * Falls back to original text if the API call fails.
  */
-async function rewriteDeal(genAI, title, description) {
+async function rewriteDeal(groq, title, description) {
   const prompt = `You are a copywriter for Zol Deals, an Amazon deals site.
 
 Rewrite this deal in TWO versions:
@@ -274,9 +274,12 @@ WEBSITE: [your website copy here]
 WHATSAPP: [your whatsapp copy here]`;
 
   try {
-    const model = genAI.getGenerativeModel({ model: 'gemini-2.0-flash-lite' }, { apiVersion: 'v1' });
-    const result = await model.generateContent(prompt);
-    const text = result.response.text().trim();
+    const completion = await groq.chat.completions.create({
+      messages: [{ role: 'user', content: prompt }],
+      model: 'llama-3.1-8b-instant',
+      max_tokens: 300,
+    });
+    const text = completion.choices[0]?.message?.content?.trim();
 
     const webMatch = text.match(/WEBSITE:\s*([\s\S]+?)(?=WHATSAPP:|$)/);
     const waMatch  = text.match(/WHATSAPP:\s*([\s\S]+?)$/);
@@ -625,14 +628,14 @@ async function main() {
   // Create output folders if they don't exist yet
   fs.mkdirSync(DEALS_DIR, { recursive: true });
 
-  // Set up Gemini AI client
-  const apiKey = process.env.GEMINI_API_KEY;
-  let genAI = null;
+  // Set up Groq AI client
+  const apiKey = process.env.GROQ_API_KEY;
+  let groqClient = null;
   if (!apiKey) {
-    console.log('⚠  GEMINI_API_KEY not set — AI rewriting will use fallback text.\n');
+    console.log('⚠  GROQ_API_KEY not set — AI rewriting will use fallback text.\n');
   } else {
-    genAI = new GoogleGenerativeAI(apiKey);
-    console.log('  Gemini AI client ready.\n');
+    groqClient = new Groq({ apiKey });
+    console.log('  Groq AI client ready.\n');
   }
 
   // Load today's cache (deals already processed this run/earlier today)
@@ -668,17 +671,17 @@ async function main() {
 
   // Step 3: Rewrite only NEW deals with AI
   const newEnrichedDeals = [];
-  if (newRawDeals.length) console.log('Rewriting new deals with Claude AI...');
+  if (newRawDeals.length) console.log('Rewriting new deals with Groq AI...');
   for (const deal of newRawDeals) {
     console.log(`  Rewriting: ${deal.title.slice(0, 55)}...`);
-    const { webCopy, waCopy } = genAI
-      ? await rewriteDeal(genAI, deal.title, deal.description)
+    const { webCopy, waCopy } = groqClient
+      ? await rewriteDeal(groqClient, deal.title, deal.description)
       : {
           webCopy: `${deal.description.slice(0, 200).trimEnd()} Grab it here →`,
           waCopy:  'Hot deal on Amazon today! 🛒 Check it out.',
         };
     newEnrichedDeals.push({ ...deal, webCopy, waCopy });
-    if (genAI) await sleep(5000); // stay within Gemini free-tier rate limit (15 RPM)
+    if (groqClient) await sleep(2000); // polite pause between Groq AI requests
   }
 
   // Merge new deals with cached deals (newest first)
