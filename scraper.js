@@ -118,6 +118,12 @@ function tagLink(url) {
   return url;
 }
 
+/** Extract a 10-char Amazon ASIN from a full amazon.com URL */
+function extractAsin(url) {
+  const m = (url || '').match(/\/(?:dp|gp\/product|exec\/obidos\/ASIN)\/([A-Z0-9]{10})/i);
+  return m ? m[1].toUpperCase() : null;
+}
+
 /**
  * Follow an amzn.to short link one hop and return the full amazon.com URL.
  * amzn.to links have the ORIGINAL creator's tag baked in — we must resolve
@@ -254,12 +260,12 @@ async function scrapePost(url) {
                  || null;
       if (ogImg && !isScreenshot(ogImg)) imageUrl = ogImg;
     }
-    // 3rd choice: first non-screenshot content image from an external domain
+    // 3rd choice: first non-screenshot image anywhere in the content (incl. TJBDeals CDN)
     if (!imageUrl) {
       contentEl.find('img').each((_, el) => {
         if (imageUrl) return;
-        const src = $(el).attr('src') || '';
-        if (src && !isScreenshot(src) && !src.includes('tjbdeals.com')) imageUrl = src;
+        const src = $(el).attr('src') || $(el).attr('data-src') || '';
+        if (src && !isScreenshot(src)) imageUrl = src;
       });
     }
 
@@ -270,12 +276,14 @@ async function scrapePost(url) {
       rawLink = await resolveAmznShortLink(rawLink);
     }
 
+    const affiliateUrl = tagLink(rawLink);
     return {
       title,
       description,
       imageUrl,
       promoCode,
-      affiliateUrl: tagLink(rawLink),
+      asin: extractAsin(affiliateUrl),
+      affiliateUrl,
       sourceUrl: url,
     };
   } catch (err) {
@@ -514,6 +522,43 @@ footer {
 `.trim();
 
 // ══════════════════════════════════════════════════════════════════
+//  DEEP-LINK JS  (opens Amazon app on mobile, falls back to web)
+// ══════════════════════════════════════════════════════════════════
+
+// Inlined into every page so no extra round-trip is needed.
+// iOS:     tries amzn://dp/ASIN (Amazon app) — falls back to browser after 2s
+//          Uses visibilitychange to cancel the timer if the app actually opened.
+// Android: uses Android Intent URI; the system opens the app or the browser.
+// Desktop: just opens the web URL in a new tab.
+const SITE_JS = `
+function openDeal(evt, el) {
+  evt.preventDefault();
+  var url = el.href;
+  var asin = el.dataset.asin;
+  var ua = navigator.userAgent;
+  if (!asin || !/Mobi|Android|iPhone|iPad|iPod/i.test(ua)) {
+    window.open(url, '_blank', 'noopener');
+    return;
+  }
+  if (/iPhone|iPad|iPod/i.test(ua)) {
+    var t = setTimeout(function() { window.open(url, '_blank', 'noopener'); }, 2000);
+    document.addEventListener('visibilitychange', function h() {
+      if (document.hidden) {
+        clearTimeout(t);
+        document.removeEventListener('visibilitychange', h);
+      }
+    });
+    window.location.href = 'amzn://dp/' + asin + '?tag=${AFFILIATE_TAG}';
+  } else {
+    window.location.href =
+      'intent://www.amazon.com/dp/' + asin + '?tag=${AFFILIATE_TAG}' +
+      '#Intent;scheme=https;package=com.amazon.mShop.android.shopping;' +
+      'S.browser_fallback_url=' + encodeURIComponent(url) + ';end';
+  }
+}
+`.trim();
+
+// ══════════════════════════════════════════════════════════════════
 //  HTML GENERATION
 // ══════════════════════════════════════════════════════════════════
 
@@ -527,12 +572,13 @@ function cardHtml(deal) {
         <button class="promo-copy" onclick="this.textContent='Copied!';navigator.clipboard.writeText('${esc(deal.promoCode)}');setTimeout(()=>this.textContent='${esc(deal.promoCode)}',1500)">${esc(deal.promoCode)}</button>
       </div>`
     : '';
+  const asinAttr = deal.asin ? ` data-asin="${esc(deal.asin)}"` : '';
   return `    <div class="deal-card">
 ${imgHtml}
       <h3>${esc(deal.title)}</h3>
       <p>${esc(deal.webCopy)}</p>
 ${promoHtml}
-      <a class="btn" href="${deal.affiliateUrl}" target="_blank" rel="noopener sponsored">Shop on Amazon →</a>
+      <a class="btn" href="${deal.affiliateUrl}"${asinAttr} target="_blank" rel="noopener sponsored" onclick="openDeal(event,this)">Shop on Amazon →</a>
     </div>`;
 }
 
@@ -581,6 +627,7 @@ ${archiveSection}
   <footer>
     <p>As an Amazon Associate I earn from qualifying purchases at no extra cost to you.</p>
   </footer>
+  <script src="app.js"></script>
 </body>
 </html>
 `;
@@ -614,6 +661,7 @@ ${dealsSection}
   <footer>
     <p>As an Amazon Associate I earn from qualifying purchases at no extra cost to you.</p>
   </footer>
+  <script src="../app.js"></script>
 </body>
 </html>
 `;
@@ -785,6 +833,9 @@ async function main() {
 
   fs.writeFileSync(path.join(SITE_DIR, 'style.css'), SITE_CSS, 'utf8');
   console.log(`  Written: ${SITE_DIR}/style.css`);
+
+  fs.writeFileSync(path.join(SITE_DIR, 'app.js'), SITE_JS, 'utf8');
+  console.log(`  Written: ${SITE_DIR}/app.js`);
 
   fs.writeFileSync(path.join(SITE_DIR, 'index.html'), generateIndex(enrichedDeals, archiveDates), 'utf8');
   console.log(`  Written: ${SITE_DIR}/index.html`);
