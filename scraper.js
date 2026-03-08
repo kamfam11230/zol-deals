@@ -894,8 +894,14 @@ async function main() {
     if (groqClient) await sleep(2000); // polite pause between Groq AI requests
   }
 
-  // Merge new deals with cached deals (newest first)
-  const enrichedDeals = [...newEnrichedDeals, ...cachedDeals];
+  // Merge new deals with cached deals (newest first).
+  // Also drop any stale non-product entries that slipped into the cache before
+  // isAmazonLink() was tightened — they have affiliateUrls like amazon.com/prime.
+  const enrichedDeals = [...newEnrichedDeals, ...cachedDeals]
+    .filter(d => d.affiliateUrl &&
+      (d.affiliateUrl.includes('/dp/') ||
+       d.affiliateUrl.includes('/gp/product/') ||
+       d.affiliateUrl.includes('amzn.to')));
 
   // Save updated cache for today
   if (newEnrichedDeals.length > 0) {
