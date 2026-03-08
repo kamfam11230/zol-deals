@@ -7,29 +7,21 @@ function openDeal(evt, el) {
     window.open(url, '_blank', 'noopener');
     return;
   }
-  if (!asin) {
-    // No ASIN but still mobile — navigate directly so Universal Links can
-    // intercept amazon.com URLs and open the Amazon app.
-    window.location.href = url;
-    return;
-  }
-  if (/iPhone|iPad|iPod/i.test(ua)) {
-    // Try Amazon custom scheme; if app not installed fall back via Universal Link
-    // (window.location.href, not window.open, so iOS can route to the app).
-    var t = setTimeout(function() { window.location.href = url; }, 2000);
-    document.addEventListener('visibilitychange', function h() {
-      if (document.hidden) {
-        clearTimeout(t);
-        document.removeEventListener('visibilitychange', h);
-      }
-    });
-    window.location.href = 'amzn://dp/' + asin + '?tag=gowns04-20';
-  } else {
+  if (/Android/i.test(ua) && asin) {
+    // Android: Intent URI opens the Amazon app directly; browser_fallback_url
+    // handles the case where the app isn't installed.
     window.location.href =
       'intent://www.amazon.com/dp/' + asin + '?tag=gowns04-20' +
       '#Intent;scheme=https;package=com.amazon.mShop.android.shopping;' +
       'S.browser_fallback_url=' + encodeURIComponent(url) + ';end';
+    return;
   }
+  // iOS (and Android without ASIN): navigate directly to an amazon.com URL.
+  // iOS Universal Links intercept amazon.com URLs and open the Amazon app when
+  // it is installed — no custom scheme needed, no dialog, no timer.
+  window.location.href = asin
+    ? 'https://www.amazon.com/dp/' + asin + '?tag=gowns04-20'
+    : url;
 }
 
 (function() {
