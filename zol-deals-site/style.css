@@ -109,6 +109,40 @@ h2.section-title {
 }
 .archive-list a:hover { background: #FF9900; color: #fff; }
 
+.promo-badge {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: #fff8e7;
+  border: 1.5px dashed #FF9900;
+  border-radius: 6px;
+  padding: 7px 12px;
+}
+.promo-label {
+  font-size: 0.75rem;
+  font-weight: 700;
+  color: #888;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  white-space: nowrap;
+}
+.promo-copy {
+  font-family: 'Courier New', monospace;
+  font-size: 0.95rem;
+  font-weight: 700;
+  color: #232f3e;
+  letter-spacing: 1.5px;
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 2px 8px;
+  border-radius: 4px;
+  transition: background 0.15s;
+  flex: 1;
+  text-align: left;
+}
+.promo-copy:hover { background: rgba(255,153,0,0.15); }
+
 .back-link {
   display: inline-block;
   color: #FF9900;
