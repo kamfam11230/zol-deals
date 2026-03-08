@@ -17,7 +17,7 @@
 
 const axios      = require('axios');       // fetches web pages
 const cheerio    = require('cheerio');     // parses HTML
-const Anthropic  = require('@anthropic-ai/sdk'); // Claude AI
+const { GoogleGenerativeAI } = require('@google/generative-ai'); // Gemini AI
 const fs         = require('fs');          // file system (built-in)
 const path       = require('path');        // file paths (built-in)
 const https      = require('https');       // for resolving short links (built-in)
@@ -253,7 +253,7 @@ async function scrapePost(url) {
  * Ask Claude Haiku to produce a website version and a WhatsApp version.
  * Falls back to original text if the API call fails.
  */
-async function rewriteDeal(client, title, description) {
+async function rewriteDeal(genAI, title, description) {
   const prompt = `You are a copywriter for Zol Deals, an Amazon deals site.
 
 Rewrite this deal in TWO versions:
@@ -274,13 +274,10 @@ WEBSITE: [your website copy here]
 WHATSAPP: [your whatsapp copy here]`;
 
   try {
-    const msg = await client.messages.create({
-      model: 'claude-haiku-4-5-20251001',
-      max_tokens: 350,
-      messages: [{ role: 'user', content: prompt }],
-    });
+    const model = genAI.getGenerativeModel({ model: 'gemini-1.5-flash' });
+    const result = await model.generateContent(prompt);
+    const text = result.response.text().trim();
 
-    const text = msg.content[0].text.trim();
     const webMatch = text.match(/WEBSITE:\s*([\s\S]+?)(?=WHATSAPP:|$)/);
     const waMatch  = text.match(/WHATSAPP:\s*([\s\S]+?)$/);
 
@@ -628,14 +625,14 @@ async function main() {
   // Create output folders if they don't exist yet
   fs.mkdirSync(DEALS_DIR, { recursive: true });
 
-  // Set up Claude AI client
-  const apiKey = process.env.ANTHROPIC_API_KEY;
-  let client = null;
+  // Set up Gemini AI client
+  const apiKey = process.env.GEMINI_API_KEY;
+  let genAI = null;
   if (!apiKey) {
-    console.log('⚠  ANTHROPIC_API_KEY not set — AI rewriting will use fallback text.\n');
+    console.log('⚠  GEMINI_API_KEY not set — AI rewriting will use fallback text.\n');
   } else {
-    client = new Anthropic({ apiKey });
-    console.log('  Anthropic client ready.\n');
+    genAI = new GoogleGenerativeAI(apiKey);
+    console.log('  Gemini AI client ready.\n');
   }
 
   // Load today's cache (deals already processed this run/earlier today)
@@ -674,8 +671,8 @@ async function main() {
   if (newRawDeals.length) console.log('Rewriting new deals with Claude AI...');
   for (const deal of newRawDeals) {
     console.log(`  Rewriting: ${deal.title.slice(0, 55)}...`);
-    const { webCopy, waCopy } = client
-      ? await rewriteDeal(client, deal.title, deal.description)
+    const { webCopy, waCopy } = genAI
+      ? await rewriteDeal(genAI, deal.title, deal.description)
       : {
           webCopy: `${deal.description.slice(0, 200).trimEnd()} Grab it here →`,
           waCopy:  'Hot deal on Amazon today! 🛒 Check it out.',

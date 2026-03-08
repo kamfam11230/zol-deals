@@ -46,10 +46,10 @@ jobs:
       - name: Install dependencies
         run: npm install
 
-      # 5. Run the scraper (ANTHROPIC_API_KEY comes from GitHub Secrets)
+      # 5. Run the scraper (GEMINI_API_KEY comes from GitHub Secrets)
       - name: Run scraper
         env:
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           GITHUB_ACTIONS: 'true'
         run: node scraper.js
 
