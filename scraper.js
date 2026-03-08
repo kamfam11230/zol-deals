@@ -93,6 +93,26 @@ function prettyDate(dateStr) {
 }
 
 // ══════════════════════════════════════════════════════════════════
+//  IMAGE HELPERS
+// ══════════════════════════════════════════════════════════════════
+
+/**
+ * Returns true if this image URL is a known bad/screenshot image.
+ * Defined at module level so it works both at scrape time AND at
+ * HTML-render time (catching stale bad URLs already in the cache).
+ */
+function isBadImage(u) {
+  if (!u) return true;
+  // UUID filenames, incl. WordPress -e[timestamp] suffix
+  if (/\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}(-e\d+)?\./i.test(u)) return true;
+  // Files literally named "Untitled" (checkout screenshots)
+  if (/\/untitled\./i.test(u)) return true;
+  // Screenshot filenames (Screenshot-2026-03-04-at-10.15.37-PM.png etc.)
+  if (/\/screenshot[-_.]/i.test(u)) return true;
+  return false;
+}
+
+// ══════════════════════════════════════════════════════════════════
 //  AFFILIATE LINK HELPERS
 // ══════════════════════════════════════════════════════════════════
 
@@ -240,19 +260,6 @@ async function scrapePost(url) {
     }
 
     // Extract product image — prefer Amazon CDN images; skip known bad/screenshot filenames
-    const isScreenshot = (u) => {
-      if (!u) return false;
-      // UUID filenames, with optional WordPress -e[timestamp] suffix
-      // e.g. f6ec80d0-0b74-4e01-b97f-3d63685e8238.jpeg
-      //      c9ee656c-04e5-48b1-a9d4-fe4153ca15e6-e1772721154125.jpeg
-      if (/\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}(-e\d+)?\./i.test(u)) return true;
-      // Literally named "Untitled" (checkout page screenshots saved without renaming)
-      if (/\/untitled\./i.test(u)) return true;
-      // Screenshot filenames (Screenshot-2026-03-04-at-10.15.37-PM.png etc.)
-      if (/\/screenshot[-_.]/i.test(u)) return true;
-      return false;
-    };
-
     let imageUrl = null;
     // 1st choice: Amazon-hosted product image anywhere in the post body
     contentEl.find('img').each((_, el) => {
@@ -262,20 +269,20 @@ async function scrapePost(url) {
         imageUrl = src;
       }
     });
-    // 2nd choice: og:image / og:image:secure_url (skip UUID checkout screenshots)
+    // 2nd choice: og:image / og:image:secure_url (skip bad images)
     if (!imageUrl) {
       const ogImg = $('meta[property="og:image"]').attr('content')
                  || $('meta[property="og:image:secure_url"]').attr('content')
                  || $('meta[name="og:image"]').attr('content')
                  || null;
-      if (ogImg && !isScreenshot(ogImg)) imageUrl = ogImg;
+      if (ogImg && !isBadImage(ogImg)) imageUrl = ogImg;
     }
-    // 3rd choice: first non-screenshot image anywhere in the content (incl. TJBDeals CDN)
+    // 3rd choice: first non-bad image anywhere in the content (incl. TJBDeals CDN)
     if (!imageUrl) {
       contentEl.find('img').each((_, el) => {
         if (imageUrl) return;
         const src = $(el).attr('src') || $(el).attr('data-src') || '';
-        if (src && !isScreenshot(src)) imageUrl = src;
+        if (src && !isBadImage(src)) imageUrl = src;
       });
     }
 
@@ -573,9 +580,12 @@ function openDeal(evt, el) {
 // ══════════════════════════════════════════════════════════════════
 
 function cardHtml(deal) {
-  // Use the scraped image; fall back to Amazon's predictable ASIN image CDN URL.
-  // The onerror hides the container silently if the URL resolves to a 404.
-  const imgSrc = deal.imageUrl
+  // Use the scraped image (if it passes the bad-image filter), then fall back to
+  // Amazon's predictable ASIN image CDN URL. This also catches stale bad URLs
+  // that were cached before the isScreenshot logic was in place.
+  // The onerror hides the container silently if the CDN URL resolves to a 404.
+  const goodImg = !isBadImage(deal.imageUrl) ? deal.imageUrl : null;
+  const imgSrc = goodImg
     || (deal.asin ? `https://images-na.ssl-images-amazon.com/images/P/${deal.asin}.01.L.jpg` : null);
   const imgHtml = imgSrc
     ? `<div class="deal-img"><img src="${imgSrc}" alt="${esc(deal.title)}" loading="lazy" onerror="this.parentElement.style.display='none'"></div>`
