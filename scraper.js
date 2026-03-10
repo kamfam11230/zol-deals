@@ -31,6 +31,7 @@ const AFFILIATE_TAG = 'gowns04-20';
 const SOURCE_URL    = 'https://www.tjbdeals.com';
 const SITE_DIR      = 'zol-deals-site';
 const DEALS_DIR     = path.join(SITE_DIR, 'deals');
+const DETAIL_DIR    = path.join(SITE_DIR, 'd');
 const ARCHIVE_FILE  = 'archive.json';
 const DESKTOP_PATH  = 'C:\\Users\\it\\OneDrive - Element Re Development\\Desktop';
 
@@ -90,6 +91,30 @@ function todayStr() {
 function prettyDate(dateStr) {
   const d = new Date(dateStr + 'T12:00:00'); // noon avoids timezone edge cases
   return d.toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: '2-digit' });
+}
+
+/** Returns a stable file identifier for a deal - ASIN preferred, title slug fallback */
+function dealIdentifier(deal) {
+  if (deal.asin) return deal.asin;
+  return (deal.title || 'deal')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/, '')
+    .slice(0, 60);
+}
+
+/** Strip filler anchor text so only meaningful labels (prices, pack counts) survive */
+function cleanLabel(raw) {
+  if (!raw) return '';
+  const cleaned = raw
+    .replace(/clicks+here/gi, '')
+    .replace(/buys+now/gi, '')
+    .replace(/shops+now/gi, '')
+    .replace(/don'?ts+miss/gi, '')
+    .replace(/amazon/gi, '')
+    .replace(/s+/g, ' ')
+    .trim();
+  return cleaned.length >= 3 ? cleaned : '';
 }
 
 // ══════════════════════════════════════════════════════════════════
@@ -242,14 +267,14 @@ async function scrapePost(url) {
     const resp = await axios.get(url, { headers: HEADERS, timeout: 15000 });
     const $    = cheerio.load(resp.data);
 
-    // Collect all Amazon links on this page
-    const amazonLinks = [];
+    // Collect all Amazon links on this page (with anchor text for bundle labeling)
+    const rawAmazonLinks = [];
     $('a[href]').each((_, el) => {
       const href = $(el).attr('href') || '';
-      if (isAmazonLink(href)) amazonLinks.push(href);
+      if (isAmazonLink(href)) rawAmazonLinks.push({ href, rawLabel: $(el).text().trim() });
     });
 
-    if (amazonLinks.length === 0) {
+    if (rawAmazonLinks.length === 0) {
       console.log(`  No Amazon links — skipping: ${url}`);
       return null;
     }
@@ -319,8 +344,8 @@ async function scrapePost(url) {
 
     // 4th choice: scrape the Amazon product page for the main product image.
     // Only runs when we still have no image — keeps cached runs instant.
-    if (!imageUrl && amazonLinks.length > 0) {
-      const asinCandidate = extractAsin(amazonLinks[0]) || extractAsin(await resolveAmznShortLink(amazonLinks[0]));
+    if (!imageUrl && rawAmazonLinks.length > 0) {
+      const asinCandidate = extractAsin(rawAmazonLinks[0].href) || extractAsin(await resolveAmznShortLink(rawAmazonLinks[0].href));
       if (asinCandidate) {
         const amzImg = await fetchAmazonProductImage(asinCandidate);
         if (amzImg) imageUrl = amzImg;
@@ -328,14 +353,31 @@ async function scrapePost(url) {
       }
     }
 
-    // Resolve amzn.to short links → full amazon.com URL → then swap tag
-    // (tag= appended to a short link doesn't override the baked-in tag)
-    let rawLink = amazonLinks[0];
+    // Resolve the primary link for affiliateUrl / asin
+    let rawLink = rawAmazonLinks[0].href;
     if (rawLink.includes('amzn.to')) {
       rawLink = await resolveAmznShortLink(rawLink);
     }
-
     const affiliateUrl = tagLink(rawLink);
+
+    // Build links array - resolve all unique links, cap at 6
+    const linksToResolve = rawAmazonLinks.slice(0, 6);
+    const resolvedLinks = await Promise.all(
+      linksToResolve.map(async ({ href, rawLabel }) => {
+        let resolved = href;
+        if (href.includes('amzn.to')) {
+          resolved = await resolveAmznShortLink(href);
+        }
+        return { label: cleanLabel(rawLabel), url: tagLink(resolved) };
+      })
+    );
+    const seenUrls = new Set();
+    const links = resolvedLinks.filter(l => {
+      if (seenUrls.has(l.url)) return false;
+      seenUrls.add(l.url);
+      return l.url.includes('/dp/') || l.url.includes('/gp/product/');
+    });
+
     return {
       title,
       description,
@@ -343,6 +385,7 @@ async function scrapePost(url) {
       promoCode,
       asin: extractAsin(affiliateUrl),
       affiliateUrl,
+      links,
       sourceUrl: url,
     };
   } catch (err) {
@@ -578,6 +621,110 @@ footer {
   .deals-grid { grid-template-columns: 1fr; }
   header h1   { font-size: 1.6rem; }
 }
+
+/* -- Deal Detail Page -------------------------------------------- */
+.deal-detail {
+  display: grid;
+  grid-template-columns: 280px 1fr;
+  gap: 32px;
+  background: #fff;
+  border-radius: 10px;
+  padding: 28px;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+  margin-bottom: 32px;
+}
+.detail-img {
+  width: 280px;
+  height: 280px;
+  overflow: hidden;
+  border-radius: 8px;
+  background: #f0f0f0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+.detail-img img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  padding: 12px;
+}
+.detail-title {
+  font-size: 1.35rem;
+  color: #111;
+  line-height: 1.45;
+  margin-bottom: 14px;
+}
+.detail-description {
+  font-size: 0.95rem;
+  color: #444;
+  line-height: 1.7;
+  white-space: pre-line;
+  margin-bottom: 20px;
+}
+.promo-banner {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  background: #fff8e7;
+  border: 2px dashed #FF9900;
+  border-radius: 8px;
+  padding: 12px 16px;
+  margin-bottom: 20px;
+}
+.promo-banner-label {
+  font-size: 0.8rem;
+  font-weight: 700;
+  color: #888;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  white-space: nowrap;
+}
+.promo-copy-large {
+  font-family: 'Courier New', monospace;
+  font-size: 1.15rem;
+  font-weight: 700;
+  color: #232f3e;
+  letter-spacing: 2px;
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 4px 10px;
+  border-radius: 4px;
+  transition: background 0.15s;
+}
+.promo-copy-large:hover { background: rgba(255,153,0,0.2); }
+.promo-hint { font-size: 0.78rem; color: #aaa; }
+.deal-options { margin-top: 4px; }
+.deal-options h3 {
+  font-size: 0.9rem;
+  font-weight: 700;
+  color: #888;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-bottom: 12px;
+}
+.btn-option {
+  display: block;
+  background: #FF9900;
+  color: #fff;
+  text-decoration: none;
+  padding: 12px 20px;
+  border-radius: 6px;
+  font-weight: 700;
+  font-size: 0.95rem;
+  margin-bottom: 10px;
+  transition: background 0.15s;
+}
+.btn-option:hover { background: #e68a00; }
+.source-credit { margin-top: 20px; font-size: 0.82rem; color: #aaa; }
+.source-credit a { color: #aaa; text-decoration: underline; }
+
+@media (max-width: 700px) {
+  .deal-detail { grid-template-columns: 1fr; }
+  .detail-img { width: 100%; height: 220px; }
+}
 `.trim();
 
 // ══════════════════════════════════════════════════════════════════
@@ -636,7 +783,7 @@ function openDeal(evt, el) {
 //  HTML GENERATION
 // ══════════════════════════════════════════════════════════════════
 
-function cardHtml(deal) {
+function cardHtml(deal, basePath = '') {
   // Use the scraped image (if it passes the bad-image filter), then fall back to
   // Amazon's predictable ASIN image CDN URL. This also catches stale bad URLs
   // that were cached before the isScreenshot logic was in place.
@@ -653,14 +800,84 @@ function cardHtml(deal) {
         <button class="promo-copy" onclick="this.textContent='Copied!';navigator.clipboard.writeText('${esc(deal.promoCode)}');setTimeout(()=>this.textContent='${esc(deal.promoCode)}',1500)">${esc(deal.promoCode)}</button>
       </div>`
     : '';
-  const asinAttr = deal.asin ? ` data-asin="${esc(deal.asin)}"` : '';
+  const detailUrl = `${basePath}d/${dealIdentifier(deal)}.html`;
   return `    <div class="deal-card">
 ${imgHtml}
       <h3>${esc(deal.title)}</h3>
       <p>${esc(deal.webCopy)}</p>
 ${promoHtml}
-      <a class="btn" href="${deal.affiliateUrl}"${asinAttr} target="_blank" rel="noopener sponsored" onclick="openDeal(event,this)">Shop on Amazon →</a>
+      <a class="btn" href="${detailUrl}" target="_blank" rel="noopener">See full deal →</a>
     </div>`;
+}
+
+function generateDealPage(deal) {
+  const goodImg = !isBadImage(deal.imageUrl) ? deal.imageUrl : null;
+  const imgSrc = goodImg
+    || (deal.asin ? `https://images-na.ssl-images-amazon.com/images/P/${deal.asin}.01.L.jpg` : null);
+  const imgHtml = imgSrc
+    ? `<div class="detail-img"><img src="${imgSrc}" alt="${esc(deal.title)}" onerror="this.parentElement.style.display='none'"></div>`
+    : '';
+
+  const promoBannerHtml = deal.promoCode
+    ? `      <div class="promo-banner">
+        <span class="promo-banner-label">Promo Code</span>
+        <button class="promo-copy-large" onclick="this.textContent='Copied!';navigator.clipboard.writeText('${esc(deal.promoCode)}');setTimeout(()=>this.textContent='${esc(deal.promoCode)}',1500)">${esc(deal.promoCode)}</button>
+        <span class="promo-hint">Click to copy</span>
+      </div>`
+    : '';
+
+  const effectiveLinks = (deal.links && deal.links.length)
+    ? deal.links
+    : [{ label: '', url: deal.affiliateUrl }];
+
+  const optionsHtml = effectiveLinks.map(link => {
+    const label = link.label || 'Shop on Amazon';
+    const asin = extractAsin(link.url);
+    const asinAttr = asin ? ` data-asin="${esc(asin)}"` : '';
+    return `        <a class="btn-option" href="${link.url}"${asinAttr} target="_blank" rel="noopener sponsored" onclick="openDeal(event,this)">${esc(label)} →</a>`;
+  }).join('\n');
+
+  const sourceHtml = deal.sourceUrl
+    ? `      <p class="source-credit"><a href="${deal.sourceUrl}" target="_blank" rel="noopener">View original post →</a></p>`
+    : '';
+
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>${esc(deal.title)} | Zol Deals</title>
+  <meta name="description" content="${esc((deal.description || '').slice(0, 160))}">
+  <link rel="stylesheet" href="../style.css">
+</head>
+<body>
+  <header>
+    <h1>Zol Deals</h1>
+    <p class="tagline">The best Amazon deals, curated daily</p>
+  </header>
+  <div class="container">
+    <a class="back-link" href="../index.html">← Back to today's deals</a>
+    <div class="deal-detail">
+${imgHtml}
+      <div class="detail-body">
+        <h1 class="detail-title">${esc(deal.title)}</h1>
+        <p class="detail-description">${esc(deal.description || '')}</p>
+${promoBannerHtml}
+        <div class="deal-options">
+          <h3>Shop this deal</h3>
+${optionsHtml}
+        </div>
+${sourceHtml}
+      </div>
+    </div>
+  </div>
+  <footer>
+    <p>As an Amazon Associate I earn from qualifying purchases at no extra cost to you.</p>
+  </footer>
+  <script src="../app.js"></script>
+</body>
+</html>
+`;
 }
 
 function generateIndex(deals, archiveDates) {
@@ -668,7 +885,7 @@ function generateIndex(deals, archiveDates) {
   const todayDisp = prettyDate(today);
 
   const dealsSection = deals.length
-    ? `  <div class="deals-grid">\n${deals.map(cardHtml).join('\n')}\n  </div>`
+    ? `  <div class="deals-grid">\n${deals.map(d => cardHtml(d, '')).join('\n')}\n  </div>`
     : '  <p class="no-deals">No Amazon deals found today. Check back tomorrow!</p>';
 
   const pastDates = archiveDates
@@ -718,7 +935,7 @@ function generateArchivePage(deals, dateStr) {
   const dispDate = prettyDate(dateStr);
 
   const dealsSection = deals.length
-    ? `  <div class="deals-grid">\n${deals.map(cardHtml).join('\n')}\n  </div>`
+    ? `  <div class="deals-grid">\n${deals.map(d => cardHtml(d, '../')).join('\n')}\n  </div>`
     : '  <p class="no-deals">No Amazon deals were found for this date.</p>';
 
   return `<!DOCTYPE html>
@@ -836,7 +1053,8 @@ async function main() {
   console.log('═'.repeat(52) + '\n');
 
   // Create output folders if they don't exist yet
-  fs.mkdirSync(DEALS_DIR, { recursive: true });
+  fs.mkdirSync(DEALS_DIR,  { recursive: true });
+  fs.mkdirSync(DETAIL_DIR, { recursive: true });
 
   // Set up Groq AI client
   const apiKey = process.env.GROQ_API_KEY;
@@ -929,6 +1147,13 @@ async function main() {
 
   fs.writeFileSync(path.join(DEALS_DIR, `${today}.html`), generateArchivePage(enrichedDeals, today), 'utf8');
   console.log(`  Written: ${DEALS_DIR}/${today}.html`);
+
+  // Write per-deal detail pages (all deals every run - fills in any missing pages)
+  for (const deal of enrichedDeals) {
+    const id = dealIdentifier(deal);
+    fs.writeFileSync(path.join(DETAIL_DIR, `${id}.html`), generateDealPage(deal), 'utf8');
+  }
+  console.log(`  Written: ${enrichedDeals.length} deal detail page(s) in ${DETAIL_DIR}/`);
 
   // Step 6: Update archive.json
   saveArchive(archiveDates);
