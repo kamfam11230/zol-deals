@@ -2,10 +2,9 @@ name: Zol Deals — Scrape & Deploy
 
 on:
   schedule:
-    # Runs every 5 minutes, 24/7, on GitHub's servers
-    # Your computer does NOT need to be on
-    # Note: GitHub may occasionally delay by a few minutes during peak hours
-    - cron: '*/5 * * * *'
+    # Fallback: runs every 2 minutes via GitHub's scheduler
+    # (GitHub enforces a ~5 min minimum in practice — use cron-job.org for reliable 2-min triggers)
+    - cron: '*/2 * * * *'
 
   # Also lets you trigger a run manually from GitHub.com
   workflow_dispatch:

@@ -826,8 +826,10 @@ function generateDealPage(deal) {
       </div>`
     : '';
 
-  const effectiveLinks = (deal.links && deal.links.length)
-    ? deal.links
+  const productLinks = (deal.links || [])
+    .filter(l => l.url && (l.url.includes('/dp/') || l.url.includes('/gp/product/')));
+  const effectiveLinks = productLinks.length
+    ? productLinks
     : [{ label: '', url: deal.affiliateUrl }];
 
   const optionsHtml = effectiveLinks.map(link => {
@@ -837,9 +839,7 @@ function generateDealPage(deal) {
     return `        <a class="btn-option" href="${link.url}"${asinAttr} target="_blank" rel="noopener sponsored" onclick="openDeal(event,this)">${esc(label)} →</a>`;
   }).join('\n');
 
-  const sourceHtml = deal.sourceUrl
-    ? `      <p class="source-credit"><a href="${deal.sourceUrl}" target="_blank" rel="noopener">View original post →</a></p>`
-    : '';
+  const sourceHtml = '';
 
   return `<!DOCTYPE html>
 <html lang="en">
@@ -867,7 +867,6 @@ ${promoBannerHtml}
           <h3>Shop this deal</h3>
 ${optionsHtml}
         </div>
-${sourceHtml}
       </div>
     </div>
   </div>
