@@ -54,7 +54,7 @@ jobs:
         run: node scraper.js
 
       # 6. Commit and push any new/updated site files back to GitHub
-      #    Netlify watches the repo and auto-deploys on every push
+      #    Cloudflare Pages watches the repo and auto-deploys on every push
       - name: Commit and push changes
         run: |
           git config user.name  "Zol Deals Bot"
